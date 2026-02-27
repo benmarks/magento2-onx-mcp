@@ -7,10 +7,12 @@
  * and all ShippingInfo fields (shippingCarrier, shippingClass, etc.).
  */
 
-export function mapM2OrderToOnx(m2Order: any, vendorNs: string): Record<string, unknown> {
+import type { M2Order, M2OrderItem, M2Address } from "../types/magento.js";
+
+export function mapM2OrderToOnx(m2Order: M2Order, vendorNs: string): Record<string, unknown> {
   const lineItems = (m2Order.items || [])
-    .filter((item: any) => item.product_type !== "configurable")
-    .map((item: any) => ({
+    .filter((item: M2OrderItem) => item.product_type !== "configurable")
+    .map((item: M2OrderItem) => ({
       id: String(item.item_id),
       sku: item.sku,
       quantity: item.qty_ordered,
@@ -68,7 +70,7 @@ export function mapM2OrderToOnx(m2Order: any, vendorNs: string): Record<string, 
   };
 }
 
-function mapM2Address(addr: any) {
+function mapM2Address(addr: M2Address) {
   return {
     firstName: addr.firstname,
     lastName: addr.lastname,
@@ -84,7 +86,7 @@ function mapM2Address(addr: any) {
   };
 }
 
-function extractShippingAddress(order: any) {
+function extractShippingAddress(order: M2Order) {
   const assignments = order.extension_attributes?.shipping_assignments?.[0]?.shipping?.address;
   if (assignments) return mapM2Address(assignments);
   return undefined;

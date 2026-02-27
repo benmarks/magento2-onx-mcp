@@ -7,7 +7,8 @@
 
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import type { MagentoClient } from "../client/magento-client.js";
+import type { MagentoClient, MagentoListResponse } from "../client/magento-client.js";
+import type { M2Order } from "../types/magento.js";
 import { mapM2OrderToOnx } from "../mappers/order-mapper.js";
 import { temporalPaginationSchema, buildSearchCriteria, idsFilter, successResult, errorResult } from "./_helpers.js";
 
@@ -33,20 +34,20 @@ export function registerGetOrders(server: McpServer, client: MagentoClient, vend
         if (params.names?.length) extraFilters.push(idsFilter("increment_id", params.names));
 
         const criteria = buildSearchCriteria({ ...params, extraFilters });
-        const result = await client.get<any>("orders", criteria);
+        const result = await client.get<MagentoListResponse<M2Order>>("orders", criteria);
         const includeLineItems = params.includeLineItems !== false;
 
-        const orders = (result.items || []).map((o: any) => {
+        const orders = (result.items || []).map((o) => {
           const mapped = mapM2OrderToOnx(o, vendorNs);
           if (!includeLineItems) {
-            delete (mapped as any).lineItems;
+            delete mapped.lineItems;
           }
           return mapped;
         });
 
         return successResult({ orders });
-      } catch (error: any) {
-        return errorResult(`get-orders failed: ${error.message}`);
+      } catch (error: unknown) {
+        return errorResult(`get-orders failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
   );

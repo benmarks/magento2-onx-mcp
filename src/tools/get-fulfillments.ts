@@ -10,7 +10,8 @@
 
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import type { MagentoClient } from "../client/magento-client.js";
+import type { MagentoClient, MagentoListResponse } from "../client/magento-client.js";
+import type { M2Shipment, M2ShipmentTrack } from "../types/magento.js";
 import { temporalPaginationSchema, buildSearchCriteria, idsFilter, successResult, errorResult } from "./_helpers.js";
 
 export function registerGetFulfillments(server: McpServer, client: MagentoClient, vendorNs: string) {
@@ -29,20 +30,20 @@ export function registerGetFulfillments(server: McpServer, client: MagentoClient
         if (params.orderIds?.length) extraFilters.push(idsFilter("order_id", params.orderIds));
 
         const criteria = buildSearchCriteria({ ...params, extraFilters });
-        const result = await client.get<any>("shipments", criteria);
+        const result = await client.get<MagentoListResponse<M2Shipment>>("shipments", criteria);
 
-        const fulfillments = (result.items || []).map((s: any) => mapShipmentToOnxFulfillment(s, vendorNs));
+        const fulfillments = (result.items || []).map((s) => mapShipmentToOnxFulfillment(s, vendorNs));
 
         return successResult({ fulfillments });
-      } catch (error: any) {
-        return errorResult(`get-fulfillments failed: ${error.message}`);
+      } catch (error: unknown) {
+        return errorResult(`get-fulfillments failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
   );
 }
 
-function mapShipmentToOnxFulfillment(s: any, vendorNs: string): Record<string, unknown> {
-  const lineItems = (s.items || []).map((item: any) => ({
+function mapShipmentToOnxFulfillment(s: M2Shipment, vendorNs: string): Record<string, unknown> {
+  const lineItems = (s.items || []).map((item) => ({
     id: String(item.entity_id || ""),
     sku: item.sku,
     quantity: item.qty,
@@ -74,7 +75,7 @@ function mapShipmentToOnxFulfillment(s: any, vendorNs: string): Record<string, u
 
     // Line items
     lineItems,
-    trackingNumbers: tracks.map((t: any) => t.track_number),
+    trackingNumbers: tracks.map((t: M2ShipmentTrack) => t.track_number),
 
     // ShippingInfo fields
     shippingAddress,

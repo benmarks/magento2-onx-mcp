@@ -9,6 +9,7 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { MagentoClient } from "../client/magento-client.js";
+import type { M2Shipment } from "../types/magento.js";
 import { addressSchema, customFieldSchema, successResult, errorResult } from "./_helpers.js";
 
 const lineItemSchema = z.object({
@@ -21,6 +22,22 @@ const lineItemSchema = z.object({
   name: z.string().optional(),
   customFields: z.array(customFieldSchema).optional(),
 });
+
+interface ShipmentPayload {
+  notify: boolean;
+  tracks?: Array<{
+    carrier_code: string;
+    title: string;
+    track_number: string;
+  }>;
+  comment?: {
+    comment: string;
+    is_visible_on_front: number;
+  };
+  arguments?: {
+    extension_attributes: { source_code: string };
+  };
+}
 
 export function registerFulfillOrder(server: McpServer, client: MagentoClient, vendorNs: string) {
   server.tool(
@@ -53,7 +70,7 @@ export function registerFulfillOrder(server: McpServer, client: MagentoClient, v
     },
     async (params) => {
       try {
-        const shipmentPayload: any = {
+        const shipmentPayload: ShipmentPayload = {
           notify: true,
         };
 
@@ -86,7 +103,7 @@ export function registerFulfillOrder(server: McpServer, client: MagentoClient, v
           shipmentPayload
         );
 
-        const shipment = await client.get<any>(`shipments/${shipmentId}`);
+        const shipment = await client.get<M2Shipment>(`shipments/${shipmentId}`);
 
         // Build full onX Fulfillment response
         const tracks = shipment.tracks || [];
@@ -95,13 +112,13 @@ export function registerFulfillOrder(server: McpServer, client: MagentoClient, v
             id: String(shipment.entity_id),
             orderId: params.orderId,
             status: "shipped",
-            lineItems: (shipment.items || []).map((item: any) => ({
+            lineItems: (shipment.items || []).map((item) => ({
               id: String(item.entity_id || ""),
               sku: item.sku,
               quantity: item.qty,
               name: item.name || "",
             })),
-            trackingNumbers: tracks.map((t: any) => t.track_number),
+            trackingNumbers: tracks.map((t) => t.track_number),
 
             // ShippingInfo
             shippingAddress: shipment.shipping_address ? {
@@ -142,8 +159,8 @@ export function registerFulfillOrder(server: McpServer, client: MagentoClient, v
             updatedAt: shipment.updated_at,
           },
         });
-      } catch (error: any) {
-        return errorResult(`fulfill-order failed: ${error.message}`);
+      } catch (error: unknown) {
+        return errorResult(`fulfill-order failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
   );

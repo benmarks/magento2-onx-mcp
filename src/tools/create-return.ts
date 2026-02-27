@@ -11,7 +11,9 @@
 
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { MagentoApiError } from "../client/magento-client.js";
 import type { MagentoClient } from "../client/magento-client.js";
+import type { M2Rma, M2CreditMemo } from "../types/magento.js";
 import { addressSchema, customFieldSchema, successResult, errorResult } from "./_helpers.js";
 
 const inspectionSchema = z.object({
@@ -65,58 +67,62 @@ const returnMethodSchema = z.object({
   updatedAt: z.string().optional(),
 }).optional();
 
+const createReturnInputSchema = z.object({
+  // Identifiers (id, createdAt, updatedAt, tenantId are immutable/system-set)
+  externalId: z.string().optional(),
+  returnNumber: z.string().optional(),
+  orderId: z.string().describe("ID of the original order"),
+
+  // Status and outcome
+  status: z.string().optional(),
+  outcome: z.string().describe("What the customer receives (refund, exchange, store_credit)"),
+
+  // Items
+  returnLineItems: z.array(returnLineItemSchema).describe("Items being returned"),
+  exchangeLineItems: z.array(exchangeLineItemSchema).optional(),
+  totalQuantity: z.number().optional(),
+
+  // Return method and shipping
+  returnMethod: returnMethodSchema,
+  returnShippingAddress: addressSchema.optional(),
+  labels: z.array(returnLabelSchema).optional(),
+  locationId: z.string().optional(),
+
+  // Financial
+  returnTotal: z.number().optional(),
+  exchangeTotal: z.number().optional(),
+  refundAmount: z.number().optional(),
+  refundMethod: z.string().optional(),
+  refundStatus: z.string().optional(),
+  refundTransactionId: z.string().optional(),
+  shippingRefundAmount: z.number().optional(),
+  returnShippingFees: z.number().optional(),
+  restockingFee: z.number().optional(),
+
+  // Dates
+  requestedAt: z.string().optional(),
+  receivedAt: z.string().optional(),
+  completedAt: z.string().optional(),
+
+  // Metadata
+  customerNote: z.string().optional(),
+  internalNote: z.string().optional(),
+  returnInstructions: z.string().optional(),
+  declineReason: z.string().optional(),
+  statusPageUrl: z.string().optional(),
+
+  tags: z.array(z.string()).optional(),
+  customFields: z.array(customFieldSchema).optional(),
+});
+
+type CreateReturnInput = z.infer<typeof createReturnInputSchema>;
+
 export function registerCreateReturn(server: McpServer, client: MagentoClient, vendorNs: string) {
   server.tool(
     "create-return",
     "Create returns for order items with refund/exchange tracking. On Adobe Commerce creates an RMA; on Open Source creates a credit memo.",
     {
-      return: z.object({
-        // Identifiers (id, createdAt, updatedAt, tenantId are immutable/system-set)
-        externalId: z.string().optional(),
-        returnNumber: z.string().optional(),
-        orderId: z.string().describe("ID of the original order"),
-
-        // Status and outcome
-        status: z.string().optional(),
-        outcome: z.string().describe("What the customer receives (refund, exchange, store_credit)"),
-
-        // Items
-        returnLineItems: z.array(returnLineItemSchema).describe("Items being returned"),
-        exchangeLineItems: z.array(exchangeLineItemSchema).optional(),
-        totalQuantity: z.number().optional(),
-
-        // Return method and shipping
-        returnMethod: returnMethodSchema,
-        returnShippingAddress: addressSchema.optional(),
-        labels: z.array(returnLabelSchema).optional(),
-        locationId: z.string().optional(),
-
-        // Financial
-        returnTotal: z.number().optional(),
-        exchangeTotal: z.number().optional(),
-        refundAmount: z.number().optional(),
-        refundMethod: z.string().optional(),
-        refundStatus: z.string().optional(),
-        refundTransactionId: z.string().optional(),
-        shippingRefundAmount: z.number().optional(),
-        returnShippingFees: z.number().optional(),
-        restockingFee: z.number().optional(),
-
-        // Dates
-        requestedAt: z.string().optional(),
-        receivedAt: z.string().optional(),
-        completedAt: z.string().optional(),
-
-        // Metadata
-        customerNote: z.string().optional(),
-        internalNote: z.string().optional(),
-        returnInstructions: z.string().optional(),
-        declineReason: z.string().optional(),
-        statusPageUrl: z.string().optional(),
-
-        tags: z.array(z.string()).optional(),
-        customFields: z.array(customFieldSchema).optional(),
-      }),
+      return: createReturnInputSchema,
     },
     async (params) => {
       try {
@@ -124,7 +130,7 @@ export function registerCreateReturn(server: McpServer, client: MagentoClient, v
 
         // Try RMA endpoint first (Adobe Commerce)
         try {
-          const rma = await client.post<any>("returns", {
+          const rma = await client.post<M2Rma>("returns", {
             rmaDataInterface: {
               order_id: parseInt(ret.orderId, 10),
               items: ret.returnLineItems.map((item) => ({
@@ -142,10 +148,13 @@ export function registerCreateReturn(server: McpServer, client: MagentoClient, v
           return successResult({
             return: mapRmaToOnxReturn(rma, ret, vendorNs),
           });
-        } catch (rmaError: any) {
+        } catch (rmaError: unknown) {
           // RMA not available — fall back to credit memo (Open Source)
-          if (rmaError.message?.includes("404") || rmaError.message?.includes("403")) {
-            const creditmemo = await client.post<any>(`order/${ret.orderId}/refund`, {
+          if (
+            rmaError instanceof MagentoApiError &&
+            (rmaError.statusCode === 404 || rmaError.statusCode === 403)
+          ) {
+            const creditmemo = await client.post<M2CreditMemo | number>(`order/${ret.orderId}/refund`, {
               items: ret.returnLineItems.map((item) => ({
                 order_item_id: parseInt(item.orderLineItemId, 10),
                 qty: item.quantityReturned,
@@ -173,7 +182,7 @@ export function registerCreateReturn(server: McpServer, client: MagentoClient, v
                 returnLineItems: ret.returnLineItems,
                 exchangeLineItems: ret.exchangeLineItems || [],
                 totalQuantity: ret.totalQuantity || ret.returnLineItems.reduce(
-                  (sum: number, li: any) => sum + li.quantityReturned, 0
+                  (sum, li) => sum + li.quantityReturned, 0
                 ),
                 refundAmount: ret.refundAmount,
                 refundMethod: "original_payment",
@@ -195,14 +204,14 @@ export function registerCreateReturn(server: McpServer, client: MagentoClient, v
           }
           throw rmaError;
         }
-      } catch (error: any) {
-        return errorResult(`create-return failed: ${error.message}`);
+      } catch (error: unknown) {
+        return errorResult(`create-return failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
   );
 }
 
-function mapRmaToOnxReturn(rma: any, input: any, vendorNs: string): Record<string, unknown> {
+function mapRmaToOnxReturn(rma: M2Rma, input: CreateReturnInput, vendorNs: string): Record<string, unknown> {
   const now = new Date().toISOString();
   return {
     id: String(rma.entity_id),
@@ -215,7 +224,7 @@ function mapRmaToOnxReturn(rma: any, input: any, vendorNs: string): Record<strin
     returnLineItems: input.returnLineItems,
     exchangeLineItems: input.exchangeLineItems || [],
     totalQuantity: input.totalQuantity || input.returnLineItems.reduce(
-      (sum: number, li: any) => sum + li.quantityReturned, 0
+      (sum, li) => sum + li.quantityReturned, 0
     ),
 
     // Shipping
