@@ -5,9 +5,11 @@
  * email, firstName, lastName, addresses, phone, status, type, etc.
  */
 
+import type { M2Customer, M2CustomerAddress } from "../types/magento.js";
+
 const GENDER_MAP: Record<number, string> = { 1: "male", 2: "female", 3: "not_specified" };
 
-export function mapM2CustomerToOnx(customer: any, vendorNs: string): Record<string, unknown> {
+export function mapM2CustomerToOnx(customer: M2Customer, vendorNs: string): Record<string, unknown> {
   return {
     id: String(customer.id),
     email: customer.email,
@@ -16,7 +18,7 @@ export function mapM2CustomerToOnx(customer: any, vendorNs: string): Record<stri
     phone: "",
     status: "active",
     type: "individual",
-    addresses: (customer.addresses || []).map((addr: any) => ({
+    addresses: (customer.addresses || []).map((addr: M2CustomerAddress) => ({
       name: addr.default_shipping ? "shipping" : addr.default_billing ? "billing" : "other",
       address: {
         firstName: addr.firstname,

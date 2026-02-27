@@ -7,15 +7,17 @@
  * barcode, upc, externalProductId, costCurrency, etc.
  */
 
+import type { M2Product, M2CustomAttribute, M2MediaGalleryEntry } from "../types/magento.js";
+
 export function mapM2ProductVariantToOnx(
-  product: any,
+  product: M2Product,
   parentId: string | undefined,
   vendorNs: string,
   currency: string,
   selectedOptions?: Array<{ name: string; value: string }>
 ): Record<string, unknown> {
   const customAttrs = product.custom_attributes || [];
-  const getAttr = (code: string) => customAttrs.find((a: any) => a.attribute_code === code)?.value;
+  const getAttr = (code: string) => customAttrs.find((a: M2CustomAttribute) => a.attribute_code === code)?.value;
 
   const specialPrice = getAttr("special_price");
   const cost = getAttr("cost");
@@ -40,7 +42,7 @@ export function mapM2ProductVariantToOnx(
       ? { value: product.weight, unit: "lb" as const }
       : undefined,
     dimensions: buildDimensions(getAttr),
-    imageURLs: (product.media_gallery_entries || []).map((img: any) => img.file),
+    imageURLs: (product.media_gallery_entries || []).map((img: M2MediaGalleryEntry) => img.file),
     taxable: true,
     tags: [],
     createdAt: product.created_at,
@@ -51,7 +53,7 @@ export function mapM2ProductVariantToOnx(
   };
 }
 
-function buildDimensions(getAttr: (code: string) => any) {
+function buildDimensions(getAttr: (code: string) => string | undefined) {
   const length = getAttr("ts_dimensions_length");
   const width = getAttr("ts_dimensions_width");
   const height = getAttr("ts_dimensions_height");

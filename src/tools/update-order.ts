@@ -12,6 +12,7 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { MagentoClient } from "../client/magento-client.js";
+import type { M2Order } from "../types/magento.js";
 import { mapM2OrderToOnx } from "../mappers/order-mapper.js";
 import { addressSchema, customFieldSchema, successResult, errorResult } from "./_helpers.js";
 
@@ -92,7 +93,7 @@ export function registerUpdateOrder(server: McpServer, client: MagentoClient, ve
 
         // Update billing address if provided
         if (params.updates.billingAddress) {
-          const order = await client.get<any>(`orders/${sourceId}`);
+          const order = await client.get<M2Order>(`orders/${sourceId}`);
           if (order.billing_address) {
             const addr = params.updates.billingAddress;
             const updatedAddr = {
@@ -114,10 +115,10 @@ export function registerUpdateOrder(server: McpServer, client: MagentoClient, ve
           }
         }
 
-        const order = await client.get<any>(`orders/${sourceId}`);
+        const order = await client.get<M2Order>(`orders/${sourceId}`);
         return successResult({ order: mapM2OrderToOnx(order, vendorNs) });
-      } catch (error: any) {
-        return errorResult(`update-order failed: ${error.message}`);
+      } catch (error: unknown) {
+        return errorResult(`update-order failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
   );

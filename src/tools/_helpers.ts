@@ -65,6 +65,9 @@ export function buildSearchCriteria(params: {
 
   const pageSize = params.pageSize || 10;
   const skip = params.skip || 0;
+  // M2 uses page-based pagination. Non-aligned skip values are silently rounded
+  // to the nearest page boundary. E.g., skip=15, pageSize=10 maps to page 2
+  // (offset 10), not offset 15. Consumers should use multiples of pageSize.
   const currentPage = Math.floor(skip / pageSize) + 1;
 
   return {

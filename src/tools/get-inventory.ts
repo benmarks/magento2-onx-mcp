@@ -9,8 +9,19 @@
 
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import type { MagentoClient } from "../client/magento-client.js";
+import type { MagentoClient, MagentoListResponse } from "../client/magento-client.js";
+import type { SearchCriteria } from "../client/magento-client.js";
+import type { M2SourceItem, M2StockItem } from "../types/magento.js";
 import { successResult, errorResult } from "./_helpers.js";
+
+interface OnxInventoryRecord {
+  sku: string;
+  locationId: string;
+  available: number;
+  onHand: number;
+  unavailable: number;
+  tenantId: string;
+}
 
 export function registerGetInventory(server: McpServer, client: MagentoClient, vendorNs: string) {
   server.tool(
@@ -35,8 +46,8 @@ export function registerGetInventory(server: McpServer, client: MagentoClient, v
           const inventory = await getLegacyInventory(client, params.skus, vendorNs);
           return successResult({ inventory });
         }
-      } catch (error: any) {
-        return errorResult(`get-inventory failed: ${error.message}`);
+      } catch (error: unknown) {
+        return errorResult(`get-inventory failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
   );
@@ -47,43 +58,42 @@ async function getMsiInventory(
   skus: string[],
   locationIds: string[] | undefined,
   vendorNs: string
-) {
-  const results: any[] = [];
+): Promise<OnxInventoryRecord[]> {
+  const filters: SearchCriteria = {
+    filterGroups: [
+      { filters: [{ field: "sku", value: skus.join(","), conditionType: "in" }] },
+    ],
+    pageSize: skus.length * 10,
+  };
 
-  for (const sku of skus) {
-    const filters: any = {
-      filterGroups: [{ filters: [{ field: "sku", value: sku, conditionType: "eq" }] }],
-    };
-
-    if (locationIds?.length) {
-      filters.filterGroups.push({
-        filters: [{ field: "source_code", value: locationIds.join(","), conditionType: "in" }],
-      });
-    }
-
-    const response = await client.get<any>("inventory/source-items", filters);
-
-    for (const item of response.items || []) {
-      results.push({
-        sku: item.sku,
-        locationId: item.source_code,
-        available: item.quantity,
-        onHand: item.quantity,
-        unavailable: 0,
-        tenantId: vendorNs,
-      });
-    }
+  if (locationIds?.length) {
+    filters.filterGroups!.push({
+      filters: [{ field: "source_code", value: locationIds.join(","), conditionType: "in" }],
+    });
   }
 
-  return results;
+  const response = await client.get<MagentoListResponse<M2SourceItem>>("inventory/source-items", filters);
+
+  return (response.items || []).map((item) => ({
+    sku: item.sku,
+    locationId: item.source_code,
+    available: item.quantity,
+    onHand: item.quantity,
+    unavailable: 0,
+    tenantId: vendorNs,
+  }));
 }
 
-async function getLegacyInventory(client: MagentoClient, skus: string[], vendorNs: string) {
-  const results: any[] = [];
+async function getLegacyInventory(
+  client: MagentoClient,
+  skus: string[],
+  vendorNs: string
+): Promise<OnxInventoryRecord[]> {
+  const results: OnxInventoryRecord[] = [];
 
   for (const sku of skus) {
     try {
-      const stockItem = await client.get<any>(`stockItems/${encodeURIComponent(sku)}`);
+      const stockItem = await client.get<M2StockItem>(`stockItems/${encodeURIComponent(sku)}`);
       results.push({
         sku,
         locationId: "default",

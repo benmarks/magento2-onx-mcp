@@ -4,12 +4,14 @@
  * Matches: CreateSalesOrderInputSchema from reference server
  * Input: { order: OrderSchema (minus immutable fields: id, createdAt, updatedAt, tenantId) }
  *
- * Accepts the full onX Order shape. Creates a new order via M2's cart/quote API flow.
+ * Creates a new order via M2's admin POST /orders endpoint.
+ * Note: The admin API requires explicit item prices — the cart pricing pipeline is bypassed.
  */
 
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { MagentoClient } from "../client/magento-client.js";
+import type { M2Order } from "../types/magento.js";
 import { mapM2OrderToOnx } from "../mappers/order-mapper.js";
 import { addressSchema, customFieldSchema, successResult, errorResult } from "./_helpers.js";
 
@@ -17,24 +19,26 @@ const lineItemSchema = z.object({
   id: z.string().optional(),
   sku: z.string(),
   quantity: z.number().min(1),
-  unitPrice: z.number().optional(),
+  unitPrice: z.number().describe("Unit price (required — admin API bypasses cart pricing)"),
   unitDiscount: z.number().optional(),
   totalPrice: z.number().optional(),
   name: z.string().optional(),
   customFields: z.array(customFieldSchema).optional(),
 });
 
+type OnxAddress = z.infer<typeof addressSchema>;
+
 export function registerCreateSalesOrder(server: McpServer, client: MagentoClient, vendorNs: string) {
   server.tool(
     "create-sales-order",
-    "Creates a new order when a customer completes checkout or when importing orders from external systems. Required: line items with SKUs and quantities.",
+    "Creates a new order via the admin API. Required: line items with SKUs, quantities, and unitPrice (admin API bypasses the cart pricing pipeline, so explicit prices are required).",
     {
       order: z.object({
         // All Order fields from the onX spec (minus immutable: id, createdAt, updatedAt, tenantId)
         externalId: z.string().optional().describe("External order ID from source system"),
         name: z.string().optional().describe("Order name/number"),
         status: z.string().optional(),
-        lineItems: z.array(lineItemSchema).describe("Order line items"),
+        lineItems: z.array(lineItemSchema).describe("Order line items (unitPrice required — admin API bypasses cart pricing)"),
         customer: z.object({
           email: z.string().optional(),
           firstName: z.string().optional(),
@@ -71,44 +75,81 @@ export function registerCreateSalesOrder(server: McpServer, client: MagentoClien
         const order = params.order;
         const email = order.customer?.email || order.billingAddress?.email || "guest@example.com";
 
-        // Step 1: Create guest cart
-        const cartId = await client.post<string>("guest-carts", {});
+        // Build M2 order items
+        const m2Items = order.lineItems.map((item) => ({
+          sku: item.sku,
+          name: item.name || item.sku,
+          qty_ordered: item.quantity,
+          price: item.unitPrice || 0,
+          base_price: item.unitPrice || 0,
+          row_total: item.totalPrice ?? (item.unitPrice || 0) * item.quantity,
+          base_row_total: item.totalPrice ?? (item.unitPrice || 0) * item.quantity,
+          product_type: "simple",
+        }));
 
-        // Step 2: Add items
-        for (const item of order.lineItems) {
-          await client.post(`guest-carts/${cartId}/items`, {
-            cartItem: { sku: item.sku, qty: item.quantity, quote_id: cartId },
-          });
+        const subtotal = order.subTotalPrice ?? m2Items.reduce((sum, i) => sum + i.row_total, 0);
+        const shippingAmount = order.shippingPrice || 0;
+        const discount = order.orderDiscount || 0;
+        const tax = order.orderTax || 0;
+        const grandTotal = order.totalPrice ?? (subtotal + shippingAmount + tax - discount);
+
+        const billingAddr = mapOnxAddressToM2(order.billingAddress || {}, email);
+        const shippingAddr = mapOnxAddressToM2(order.shippingAddress || order.billingAddress || {}, email);
+
+        const carrierCode = order.shippingCode || order.shippingCarrier || "flatrate";
+        const methodCode = order.shippingClass || "flatrate";
+        const shippingMethod = `${carrierCode}_${methodCode}`;
+
+        const entity: Record<string, unknown> = {
+          customer_email: email,
+          customer_firstname: order.customer?.firstName || billingAddr.firstname,
+          customer_lastname: order.customer?.lastName || billingAddr.lastname,
+          base_currency_code: order.currency || "USD",
+          global_currency_code: order.currency || "USD",
+          order_currency_code: order.currency || "USD",
+          store_currency_code: order.currency || "USD",
+          store_id: 1,
+          state: order.status || "new",
+          status: order.status || "pending",
+          is_virtual: 0,
+          subtotal,
+          base_subtotal: subtotal,
+          grand_total: grandTotal,
+          base_grand_total: grandTotal,
+          shipping_amount: shippingAmount,
+          base_shipping_amount: shippingAmount,
+          tax_amount: tax,
+          base_tax_amount: tax,
+          discount_amount: discount > 0 ? -discount : 0,
+          base_discount_amount: discount > 0 ? -discount : 0,
+          shipping_description: order.shippingCarrier || "Flat Rate - Fixed",
+          shipping_method: shippingMethod,
+          items: m2Items,
+          billing_address: billingAddr,
+          payment: { method: "checkmo" },
+          extension_attributes: {
+            shipping_assignments: [
+              {
+                shipping: {
+                  address: shippingAddr,
+                  method: shippingMethod,
+                },
+                items: m2Items,
+              },
+            ],
+          },
+        };
+
+        if (order.externalId) {
+          entity.ext_order_id = order.externalId;
         }
 
-        // Step 3: Set billing address
-        const billingAddr = order.billingAddress || {};
-        await client.post(`guest-carts/${cartId}/billing-address`, {
-          address: mapOnxAddressToM2(billingAddr, email),
-        });
+        // Single POST creates the order and returns the full entity
+        const m2Order = await client.post<M2Order>("orders", { entity });
 
-        // Step 4: Set shipping info
-        const shippingAddr = order.shippingAddress || billingAddr;
-        const carrier = order.shippingCarrier || order.shippingCode || "flatrate";
-        const method = order.shippingClass || "flatrate";
-
-        await client.post(`guest-carts/${cartId}/shipping-information`, {
-          addressInformation: {
-            shipping_address: mapOnxAddressToM2(shippingAddr, email),
-            billing_address: mapOnxAddressToM2(billingAddr, email),
-            shipping_carrier_code: carrier,
-            shipping_method_code: method,
-          },
-        });
-
-        // Step 5: Place order
-        const orderId = await client.put<number>(`guest-carts/${cartId}/order`, {
-          paymentMethod: { method: "checkmo" },
-        });
-
-        // Step 6: Add order note as comment if provided
+        // Add order note as comment if provided
         if (order.orderNote) {
-          await client.post(`orders/${orderId}/comments`, {
+          await client.post(`orders/${m2Order.entity_id}/comments`, {
             statusHistory: {
               comment: order.orderNote,
               is_customer_notified: 0,
@@ -117,17 +158,15 @@ export function registerCreateSalesOrder(server: McpServer, client: MagentoClien
           });
         }
 
-        // Step 7: Fetch and return
-        const m2Order = await client.get<any>(`orders/${orderId}`);
         return successResult({ order: mapM2OrderToOnx(m2Order, vendorNs) });
-      } catch (error: any) {
-        return errorResult(`create-sales-order failed: ${error.message}`);
+      } catch (error: unknown) {
+        return errorResult(`create-sales-order failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
   );
 }
 
-function mapOnxAddressToM2(addr: any, email: string) {
+function mapOnxAddressToM2(addr: OnxAddress, email: string) {
   return {
     firstname: addr.firstName || "Guest",
     lastname: addr.lastName || "Customer",

@@ -7,7 +7,8 @@
 
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import type { MagentoClient } from "../client/magento-client.js";
+import type { MagentoClient, MagentoListResponse } from "../client/magento-client.js";
+import type { M2Customer } from "../types/magento.js";
 import { mapM2CustomerToOnx } from "../mappers/customer-mapper.js";
 import { temporalPaginationSchema, buildSearchCriteria, idsFilter, successResult, errorResult } from "./_helpers.js";
 
@@ -27,12 +28,12 @@ export function registerGetCustomers(server: McpServer, client: MagentoClient, v
         if (params.emails?.length) extraFilters.push(idsFilter("email", params.emails));
 
         const criteria = buildSearchCriteria({ ...params, extraFilters });
-        const result = await client.get<any>("customers/search", criteria);
-        const customers = (result.items || []).map((c: any) => mapM2CustomerToOnx(c, vendorNs));
+        const result = await client.get<MagentoListResponse<M2Customer>>("customers/search", criteria);
+        const customers = (result.items || []).map((c) => mapM2CustomerToOnx(c, vendorNs));
 
         return successResult({ customers });
-      } catch (error: any) {
-        return errorResult(`get-customers failed: ${error.message}`);
+      } catch (error: unknown) {
+        return errorResult(`get-customers failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
   );

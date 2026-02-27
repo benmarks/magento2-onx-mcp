@@ -9,8 +9,24 @@
 
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import type { MagentoClient } from "../client/magento-client.js";
+import { MagentoApiError } from "../client/magento-client.js";
+import type { MagentoClient, MagentoListResponse } from "../client/magento-client.js";
+import type { M2Rma, M2RmaItem, M2RmaComment, M2RmaTrack, M2CreditMemo, M2CreditMemoItem, M2CreditMemoComment } from "../types/magento.js";
 import { temporalPaginationSchema, buildSearchCriteria, idsFilter, successResult, errorResult } from "./_helpers.js";
+
+interface GetReturnsParams {
+  ids?: string[];
+  orderIds?: string[];
+  returnNumbers?: string[];
+  statuses?: string[];
+  outcomes?: string[];
+  updatedAtMin?: string;
+  updatedAtMax?: string;
+  createdAtMin?: string;
+  createdAtMax?: string;
+  pageSize?: number;
+  skip?: number;
+}
 
 export function registerGetReturns(server: McpServer, client: MagentoClient, vendorNs: string) {
   server.tool(
@@ -29,18 +45,24 @@ export function registerGetReturns(server: McpServer, client: MagentoClient, ven
         // Try RMA endpoint first (Adobe Commerce)
         try {
           return await getRmaReturns(client, params, vendorNs);
-        } catch {
-          // Fall back to credit memos
-          return await getCreditMemoReturns(client, params, vendorNs);
+        } catch (rmaError: unknown) {
+          // RMA not available — fall back to credit memos (Open Source)
+          if (
+            rmaError instanceof MagentoApiError &&
+            (rmaError.statusCode === 404 || rmaError.statusCode === 403)
+          ) {
+            return await getCreditMemoReturns(client, params, vendorNs);
+          }
+          throw rmaError;
         }
-      } catch (error: any) {
-        return errorResult(`get-returns failed: ${error.message}`);
+      } catch (error: unknown) {
+        return errorResult(`get-returns failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
   );
 }
 
-async function getRmaReturns(client: MagentoClient, params: any, vendorNs: string) {
+async function getRmaReturns(client: MagentoClient, params: GetReturnsParams, vendorNs: string) {
   const extraFilters: Array<{ field: string; value: string; conditionType: string }> = [];
   if (params.ids?.length) extraFilters.push(idsFilter("entity_id", params.ids));
   if (params.orderIds?.length) extraFilters.push(idsFilter("order_id", params.orderIds));
@@ -48,14 +70,14 @@ async function getRmaReturns(client: MagentoClient, params: any, vendorNs: strin
   if (params.returnNumbers?.length) extraFilters.push(idsFilter("increment_id", params.returnNumbers));
 
   const criteria = buildSearchCriteria({ ...params, extraFilters });
-  const result = await client.get<any>("returns", criteria);
+  const result = await client.get<MagentoListResponse<M2Rma>>("returns", criteria);
 
-  const returns = (result.items || []).map((rma: any) => mapRmaToOnx(rma, vendorNs));
+  const returns = (result.items || []).map((rma) => mapRmaToOnx(rma, vendorNs));
   return successResult({ returns });
 }
 
-function mapRmaToOnx(rma: any, vendorNs: string): Record<string, unknown> {
-  const returnLineItems = (rma.items || []).map((item: any) => ({
+function mapRmaToOnx(rma: M2Rma, vendorNs: string): Record<string, unknown> {
+  const returnLineItems = (rma.items || []).map((item: M2RmaItem) => ({
     id: String(item.entity_id || ""),
     orderLineItemId: String(item.order_item_id),
     sku: item.product_sku || "",
@@ -73,18 +95,18 @@ function mapRmaToOnx(rma: any, vendorNs: string): Record<string, unknown> {
   }));
 
   const totalQuantity = returnLineItems.reduce(
-    (sum: number, li: any) => sum + (li.quantityReturned || 0), 0
+    (sum, li) => sum + (li.quantityReturned || 0), 0
   );
 
   // Extract comments
   const comments = rma.comments || [];
   const customerComments = comments
-    .filter((c: any) => c.is_visible_on_front)
-    .map((c: any) => c.comment)
+    .filter((c: M2RmaComment) => c.is_visible_on_front)
+    .map((c: M2RmaComment) => c.comment)
     .join("; ");
   const internalComments = comments
-    .filter((c: any) => !c.is_visible_on_front)
-    .map((c: any) => c.comment)
+    .filter((c: M2RmaComment) => !c.is_visible_on_front)
+    .map((c: M2RmaComment) => c.comment)
     .join("; ");
 
   return {
@@ -102,7 +124,7 @@ function mapRmaToOnx(rma: any, vendorNs: string): Record<string, unknown> {
     // Shipping (RMA tracks may not be present)
     returnMethod: undefined,
     returnShippingAddress: undefined,
-    labels: (rma.tracks || []).map((track: any) => ({
+    labels: (rma.tracks || []).map((track: M2RmaTrack) => ({
       carrier: track.carrier_title || "",
       trackingNumber: track.track_number || "",
     })),
@@ -142,20 +164,20 @@ function mapRmaToOnx(rma: any, vendorNs: string): Record<string, unknown> {
   };
 }
 
-async function getCreditMemoReturns(client: MagentoClient, params: any, vendorNs: string) {
+async function getCreditMemoReturns(client: MagentoClient, params: GetReturnsParams, vendorNs: string) {
   const extraFilters: Array<{ field: string; value: string; conditionType: string }> = [];
   if (params.ids?.length) extraFilters.push(idsFilter("entity_id", params.ids));
   if (params.orderIds?.length) extraFilters.push(idsFilter("order_id", params.orderIds));
 
   const criteria = buildSearchCriteria({ ...params, extraFilters });
-  const result = await client.get<any>("creditmemos", criteria);
+  const result = await client.get<MagentoListResponse<M2CreditMemo>>("creditmemos", criteria);
 
-  const returns = (result.items || []).map((cm: any) => mapCreditMemoToOnx(cm, vendorNs));
+  const returns = (result.items || []).map((cm) => mapCreditMemoToOnx(cm, vendorNs));
   return successResult({ returns });
 }
 
-function mapCreditMemoToOnx(cm: any, vendorNs: string): Record<string, unknown> {
-  const returnLineItems = (cm.items || []).map((item: any) => ({
+function mapCreditMemoToOnx(cm: M2CreditMemo, vendorNs: string): Record<string, unknown> {
+  const returnLineItems = (cm.items || []).map((item: M2CreditMemoItem) => ({
     id: String(item.entity_id || ""),
     orderLineItemId: String(item.order_item_id),
     sku: item.sku || "",
@@ -168,12 +190,12 @@ function mapCreditMemoToOnx(cm: any, vendorNs: string): Record<string, unknown> 
   }));
 
   const totalQuantity = returnLineItems.reduce(
-    (sum: number, li: any) => sum + (li.quantityReturned || 0), 0
+    (sum, li) => sum + (li.quantityReturned || 0), 0
   );
 
   // Extract comments
   const comments = cm.comments || [];
-  const commentText = comments.map((c: any) => c.comment).join("; ");
+  const commentText = comments.map((c: M2CreditMemoComment) => c.comment).join("; ");
 
   return {
     id: String(cm.entity_id),

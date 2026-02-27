@@ -34,6 +34,18 @@ export interface MagentoListResponse<T> {
   total_count: number;
 }
 
+export class MagentoApiError extends Error {
+  constructor(
+    message: string,
+    public readonly statusCode: number,
+    public readonly method: string,
+    public readonly endpoint: string,
+  ) {
+    super(message);
+    this.name = "MagentoApiError";
+  }
+}
+
 export class MagentoClient {
   private baseUrl: string;
   private apiVersion: string;
@@ -155,8 +167,11 @@ export class MagentoClient {
     };
 
     const context = statusMessages[response.status] || "";
-    throw new Error(
-      `Magento API error: ${method} ${endpoint} returned ${response.status}. ${context}${context ? ". " : ""}Detail: ${errorBody}`
+    throw new MagentoApiError(
+      `Magento API error: ${method} ${endpoint} returned ${response.status}. ${context}${context ? ". " : ""}Detail: ${errorBody}`,
+      response.status,
+      method,
+      endpoint,
     );
   }
 }
