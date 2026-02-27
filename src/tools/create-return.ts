@@ -12,21 +12,7 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { MagentoClient } from "../client/magento-client.js";
-import { successResult, errorResult } from "./_helpers.js";
-
-const addressSchema = z.object({
-  address1: z.string().optional(),
-  address2: z.string().optional(),
-  city: z.string().optional(),
-  company: z.string().optional(),
-  country: z.string().optional(),
-  email: z.string().optional(),
-  firstName: z.string().optional(),
-  lastName: z.string().optional(),
-  phone: z.string().optional(),
-  stateOrProvince: z.string().optional(),
-  zipCodeOrPostalCode: z.string().optional(),
-});
+import { addressSchema, customFieldSchema, successResult, errorResult } from "./_helpers.js";
 
 const inspectionSchema = z.object({
   conditionCategory: z.string().optional(),
@@ -129,7 +115,7 @@ export function registerCreateReturn(server: McpServer, client: MagentoClient, v
         statusPageUrl: z.string().optional(),
 
         tags: z.array(z.string()).optional(),
-        customFields: z.array(z.object({ name: z.string(), value: z.string() })).optional(),
+        customFields: z.array(customFieldSchema).optional(),
       }),
     },
     async (params) => {

@@ -11,21 +11,7 @@ import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { MagentoClient } from "../client/magento-client.js";
 import { mapM2OrderToOnx } from "../mappers/order-mapper.js";
-import { successResult, errorResult } from "./_helpers.js";
-
-const addressSchema = z.object({
-  address1: z.string().optional(),
-  address2: z.string().optional(),
-  city: z.string().optional(),
-  company: z.string().optional(),
-  country: z.string().optional(),
-  email: z.string().optional(),
-  firstName: z.string().optional(),
-  lastName: z.string().optional(),
-  phone: z.string().optional(),
-  stateOrProvince: z.string().optional(),
-  zipCodeOrPostalCode: z.string().optional(),
-}).optional();
+import { addressSchema, customFieldSchema, successResult, errorResult } from "./_helpers.js";
 
 const lineItemSchema = z.object({
   id: z.string().optional(),
@@ -35,7 +21,7 @@ const lineItemSchema = z.object({
   unitDiscount: z.number().optional(),
   totalPrice: z.number().optional(),
   name: z.string().optional(),
-  customFields: z.array(z.object({ name: z.string(), value: z.string() })).optional(),
+  customFields: z.array(customFieldSchema).optional(),
 });
 
 export function registerCreateSalesOrder(server: McpServer, client: MagentoClient, vendorNs: string) {
@@ -54,9 +40,9 @@ export function registerCreateSalesOrder(server: McpServer, client: MagentoClien
           firstName: z.string().optional(),
           lastName: z.string().optional(),
         }).optional(),
-        billingAddress: addressSchema,
+        billingAddress: addressSchema.optional(),
         currency: z.string().optional(),
-        customFields: z.array(z.object({ name: z.string(), value: z.string() })).optional(),
+        customFields: z.array(customFieldSchema).optional(),
         discounts: z.array(z.object({}).passthrough()).optional(),
         orderDiscount: z.number().optional(),
         orderNote: z.string().optional(),
@@ -70,7 +56,7 @@ export function registerCreateSalesOrder(server: McpServer, client: MagentoClien
         totalPrice: z.number().optional(),
 
         // ShippingInfo fields
-        shippingAddress: addressSchema,
+        shippingAddress: addressSchema.optional(),
         shippingCarrier: z.string().optional(),
         shippingClass: z.string().optional(),
         shippingCode: z.string().optional(),

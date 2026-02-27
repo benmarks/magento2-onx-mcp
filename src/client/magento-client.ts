@@ -141,8 +141,8 @@ export class MagentoClient {
   private async handleError(response: Response, method: string, endpoint: string): Promise<never> {
     let errorBody: string;
     try {
-      const json = await response.json();
-      errorBody = json.message || JSON.stringify(json);
+      const json = await response.json() as Record<string, unknown>;
+      errorBody = (json.message as string) || JSON.stringify(json);
     } catch {
       errorBody = await response.text();
     }

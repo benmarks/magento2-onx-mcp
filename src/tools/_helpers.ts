@@ -1,5 +1,6 @@
 /**
  * Shared helpers matching onX reference server conventions:
+ * - Reusable zod schemas (addressSchema, customFieldSchema)
  * - TemporalPagination (updatedAtMin/Max, createdAtMin/Max, pageSize, skip)
  * - Array-based filters (ids[], statuses[], skus[])
  * - FulfillmentToolResult response shape
@@ -7,6 +8,22 @@
 
 import { z } from "zod";
 import type { SearchCriteria } from "../client/magento-client.js";
+
+export const customFieldSchema = z.object({ name: z.string(), value: z.string() });
+
+export const addressSchema = z.object({
+  address1: z.string().optional(),
+  address2: z.string().optional(),
+  city: z.string().optional(),
+  company: z.string().optional(),
+  country: z.string().optional(),
+  email: z.string().optional(),
+  firstName: z.string().optional(),
+  lastName: z.string().optional(),
+  phone: z.string().optional(),
+  stateOrProvince: z.string().optional(),
+  zipCodeOrPostalCode: z.string().optional(),
+});
 
 export const temporalPaginationSchema = {
   updatedAtMin: z.string().optional().describe("Minimum updated at date (inclusive)"),
