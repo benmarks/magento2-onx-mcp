@@ -12,10 +12,10 @@ The adapter sits between onX clients and Magento 2's REST API, translating stand
 onX Client (AI agent, OMS, WMS, etc.)
         │
         ▼
-   ┌──────────────────┐
-   │  magento2-onx     │  ← This adapter
-   │  (MCP Server)     │
-   └──────────────────┘
+   ┌────────────────┐
+   │  magento2-onx  │  ← This adapter
+   │  (MCP Server)  │
+   └────────────────┘
         │
         ▼
    Magento 2 REST API
